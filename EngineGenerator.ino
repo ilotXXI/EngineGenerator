@@ -4,59 +4,103 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
 
-static const int maxOutValue = 255;
 
-static unsigned char    _value = 1;
-static const int        _bufSize = 250;
-static unsigned char    _buf[_bufSize];
-static int              _bufInd = 0;
-
-void setup()
+inline unsigned char toOutValue(float value)
 {
+    const int maxOutValue = 255;
     const float maxOutValueF = static_cast<float>(maxOutValue);
-    const float sampleRateHz = 40000.f;
-    const float sinFreq = 160.f;
-    const float sampPeriodMcs = static_cast<unsigned long>(
-        1.f / sampleRateHz * 1E6f + 0.5f);
-    const float pi2 = 2.f * 3.14159265359f;
-    const float sinPhaseDelta = pi2 * sinFreq / sampleRateHz;
-    
-    float phase = 0.f;
-    for (auto &val:  _buf)
+    int intVal = static_cast<int>(
+        (value + 1.f) / 2.f * maxOutValueF + 0.5f);
+    if (intVal > maxOutValue)
     {
-        int intVal = static_cast<int>(
-            (sin(phase) + 1.f) / 2.f * maxOutValueF + 0.5f);
-        if (intVal > maxOutValue)
-        {
-            intVal = maxOutValue;
-        }
-        else if (intVal < 0)
-        {
-            intVal = 0;
-        }
-        val = static_cast<unsigned char>(intVal);
-        phase += sinPhaseDelta;
+        intVal = maxOutValue;
+    }
+    else if (intVal < 0)
+    {
+        intVal = 0;
+    }
+    return static_cast<unsigned char>(intVal);
+}
+
+static const float sampleRate = 10000.f;
+
+static const float fireSoundDur = 0.05f;
+static const size_t fireSoundSize = int(sampleRate * fireSoundDur + 0.5);
+static unsigned char fireSound[fireSoundSize];
+
+size_t soundIndex = 0;
+size_t strokeSize = fireSoundSize + 1000;
+unsigned char outValue = 0;
+static const unsigned char silenceSound = toOutValue(0.f);
+
+void calculateFireSound()
+{
+    const float sinFreq = 160.f;
+    const float pi2 = 2.f * 3.14159265359f;
+    const float sinPhaseDelta = pi2 * sinFreq / sampleRate;
+    
+    const float initialExpArg = 0.f;
+    const float finalExpArg = log(1E-3f);
+    const float expArgDelta = (finalExpArg - initialExpArg) /
+        static_cast<float>(fireSoundSize - 1);
+    
+    float sinPhase = 0.f;
+    float expArg = initialExpArg;
+    for (auto &val:  fireSound)
+    {
+        float value = sin(sinPhase);
+        value *= exp(expArg);
+        val = toOutValue(value);
+        
+        sinPhase += sinPhaseDelta;
+        expArg += expArgDelta;
+    }
+}
+
+bool setupSamplingInterrupts()
+{
+    const float prescaler = 8.f;
+    const float cpuFreq = 16E6f;
+    const float ticksPerOutF = cpuFreq / prescaler / sampleRate;
+    const int ticksPerOut = static_cast<int>(ticksPerOutF + 0.5f);
+    
+    if (ticksPerOut < 1)
+    {
+        Serial.println("The chosen sample rate is too slow. "
+                       "Try another prescaler or greater rate.");
+        return false;
+    }
+    if (255 - ticksPerOut < 0)
+    {
+        Serial.println("Too much ticks per sampling period for "
+                       "8-bit counter. Try another prescaler or less rate.");
+        return false;
+    }
+    if (abs(static_cast<float>(ticksPerOut) - ticksPerOutF) > 1E-7)
+    {
+        Serial.println("CPU frequency is not dividable to "
+                       "prescaler * sample rate.");
+        return false;
     }
     
-    const float prescaler = 8.f;
-    const float cpuFreqMHz = 16.f;
-    
-    // Setup sampling rate interupts.
     cli(); // Disable interrupts
     // Set timer0 interrupt at 40kHz
     TCCR0A = 0; // Set entire TCCR0A register to 0
     TCCR0B = 0; // Same for TCCR0B
     TCNT0  = 0; // Initialize counter value to 0
     // Set compare match register for 40khz increments
-    OCR0A = static_cast<unsigned char>(
-        cpuFreqMHz / prescaler * sampPeriodMcs + 0.5f) - 1;
+    OCR0A = static_cast<unsigned char>(ticksPerOut - 1);
     // Turn on CTC mode
     TCCR0A |= (1 << WGM01);
     TCCR0B |= (1 << CS01);      // Set CS01 bit for 8 prescaler
     TIMSK0 |= (1 << OCIE0A);    // Enable timer compare interrupt
     sei();  // Enable interrupts
     
-    // Setup PWM
+    return true;
+}
+
+void setupPwm()
+{
     TCCR2A = 0;
     TCCR2B = 0;
     // Clear on compare match (1 << COM2A1),
@@ -71,6 +115,22 @@ void setup()
     DDRB = (1 << DDB3);
 }
 
+void setup()
+{
+    Serial.begin(9600);
+    
+    calculateFireSound();
+    const bool setupSuccess = setupSamplingInterrupts();
+    if (!setupSuccess)
+    {
+        Serial.println("Setup errors occured. Cannot continue.");
+        digitalWrite(LED_BUILTIN, HIGH);
+        for (;;)
+            ;
+    }
+    setupPwm();
+}
+
 void loop()
 {
     // Do nothing. All processing is done by interrupts.
@@ -78,12 +138,13 @@ void loop()
 
 ISR(TIMER0_COMPA_vect)
 { // interrupt routine
-    OCR2A = _value;
+    OCR2A = outValue;
     
-    _value = _buf[_bufInd];
-    ++_bufInd;
-    if (_bufInd >= _bufSize)
+    outValue = (soundIndex < fireSoundSize) ?
+        fireSound[soundIndex] : silenceSound;
+    ++soundIndex;
+    if (soundIndex >= strokeSize)
     {
-        _bufInd = 0;
+        soundIndex = 0;
     }
 }
