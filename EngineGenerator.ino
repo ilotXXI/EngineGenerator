@@ -3,7 +3,9 @@
 
 #include <avr/io.h>
 #include <avr/interrupt.h>
+#include <util/atomic.h>
 
+#include "RpmEstimator.h"
 
 inline unsigned char toOutValue(float value)
 {
@@ -32,6 +34,10 @@ size_t soundIndex = 0;
 size_t strokeSize = fireSoundSize + 1000;
 unsigned char outValue = 0;
 static const unsigned char silenceSound = toOutValue(0.f);
+
+volatile size_t strokeSizeToUpdate = strokeSize;
+
+RpmEstimator rpmEstimator;
 
 void calculateFireSound()
 {
@@ -129,11 +135,22 @@ void setup()
             ;
     }
     setupPwm();
+    rpmEstimator.setup();
 }
 
 void loop()
 {
-    // Do nothing. All processing is done by interrupts.
+    const int rpm = rpmEstimator.rpm();
+    const float rps = static_cast<float>(rpm) / 60.f;
+    // 4-stroke engine fires once on 2 revolutions of crankshaft.
+    const float cyclesPerSec = rps / 2.f;
+    const float cycleDuration = 1.f / cyclesPerSec;
+    const int cycleSize = static_cast<int>(cycleDuration * sampleRate);
+    
+    ATOMIC_BLOCK(ATOMIC_FORCEON)
+    {
+        strokeSizeToUpdate = cycleSize;
+    }
 }
 
 ISR(TIMER0_COMPA_vect)
@@ -146,5 +163,6 @@ ISR(TIMER0_COMPA_vect)
     if (soundIndex >= strokeSize)
     {
         soundIndex = 0;
+        strokeSize = strokeSizeToUpdate;
     }
 }
