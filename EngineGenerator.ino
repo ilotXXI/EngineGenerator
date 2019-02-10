@@ -1,3 +1,9 @@
+#define RPM_ESTIMATOR_LINEAR        0
+#define RPM_ESTIMATOR_POTENTIOMETER 1
+
+#define RPM_ESTIMATOR_TYPE          RPM_ESTIMATOR_POTENTIOMETER
+
+
 #include <math.h>
 #include <Arduino.h>
 
@@ -119,7 +125,7 @@ void setupPwm()
 //         (1 << WGM20);
     TCCR2B |= (1 << CS20);  // No prescaler
     // Port B 3rd pin is set as output
-    DDRB = (1 << DDB3);
+    DDRB |= (1 << DDB3);
     sei();  // Enable interrupts
 }
 
