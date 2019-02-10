@@ -31,11 +31,11 @@ static const size_t fireSoundSize = int(sampleRate * fireSoundDur + 0.5);
 static unsigned char fireSound[fireSoundSize];
 
 size_t soundIndex = 0;
-size_t strokeSize = fireSoundSize + 1000;
+size_t cycleSize = fireSoundSize;
 unsigned char outValue = 0;
 static const unsigned char silenceSound = toOutValue(0.f);
 
-volatile size_t strokeSizeToUpdate = strokeSize;
+volatile size_t cycleSizeToUpdate = cycleSize;
 
 RpmEstimator rpmEstimator;
 
@@ -107,6 +107,7 @@ bool setupSamplingInterrupts()
 
 void setupPwm()
 {
+    cli(); // Disable interrupts
     TCCR2A = 0;
     TCCR2B = 0;
     // Clear on compare match (1 << COM2A1),
@@ -119,6 +120,7 @@ void setupPwm()
     TCCR2B |= (1 << CS20);  // No prescaler
     // Port B 3rd pin is set as output
     DDRB = (1 << DDB3);
+    sei();  // Enable interrupts
 }
 
 void setup()
@@ -145,11 +147,12 @@ void loop()
     // 4-stroke engine fires once on 2 revolutions of crankshaft.
     const float cyclesPerSec = rps / 2.f;
     const float cycleDuration = 1.f / cyclesPerSec;
-    const int cycleSize = static_cast<int>(cycleDuration * sampleRate);
+    const int newCycleSize = static_cast<int>(
+        cycleDuration * sampleRate + 0.5f);
     
     ATOMIC_BLOCK(ATOMIC_FORCEON)
     {
-        strokeSizeToUpdate = cycleSize;
+        cycleSizeToUpdate = newCycleSize;
     }
 }
 
@@ -160,9 +163,9 @@ ISR(TIMER0_COMPA_vect)
     outValue = (soundIndex < fireSoundSize) ?
         fireSound[soundIndex] : silenceSound;
     ++soundIndex;
-    if (soundIndex >= strokeSize)
+    if (soundIndex >= cycleSize)
     {
         soundIndex = 0;
-        strokeSize = strokeSizeToUpdate;
+        cycleSize = cycleSizeToUpdate;
     }
 }
