@@ -1,6 +1,8 @@
 #pragma once
 #if RPM_ESTIMATOR_TYPE == RPM_ESTIMATOR_LINEAR
 
+#include "RpmEstimatorSettings.h"
+
 class LinearRpmEstimator
 {
 public:
@@ -9,8 +11,8 @@ public:
     int rpm();
     
 private:
-    static const int    _minRpm = 1000;
-    static const int    _maxRpm = 10500;
+    static const int    _minOut = RpmEstimatorSettings::minRpm;
+    static const int    _maxOut = RpmEstimatorSettings::maxRpm;
     static const int    _step = 100;
     
     int                 _rpm = _minRpm;

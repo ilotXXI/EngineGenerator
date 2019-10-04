@@ -1,7 +1,12 @@
 #define RPM_ESTIMATOR_LINEAR        0
 #define RPM_ESTIMATOR_POTENTIOMETER 1
+#define RPM_ESTIMATOR_HALL          2
 
-#define RPM_ESTIMATOR_TYPE          RPM_ESTIMATOR_POTENTIOMETER
+#define RPM_ESTIMATOR_TYPE          RPM_ESTIMATOR_HALL
+
+#ifndef RPM_ESTIMATOR_TYPE
+static_assert(false, "RPM estimator type is not set");
+#endif
 
 
 #include <math.h>
@@ -96,11 +101,11 @@ bool setupSamplingInterrupts()
     }
     
     cli(); // Disable interrupts
-    // Set timer0 interrupt at 40kHz
+    // Set timer0 interrupt at "ticksPerOut" Hz
     TCCR0A = 0; // Set entire TCCR0A register to 0
     TCCR0B = 0; // Same for TCCR0B
     TCNT0  = 0; // Initialize counter value to 0
-    // Set compare match register for 40khz increments
+    // Set compare match register for "ticksPerOut" Hz increments
     OCR0A = static_cast<unsigned char>(ticksPerOut - 1);
     // Turn on CTC mode
     TCCR0A |= (1 << WGM01);

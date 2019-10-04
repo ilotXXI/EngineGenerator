@@ -3,6 +3,8 @@
 
 #include <Arduino.h>
 
+#include "RpmEstimatorSettings.h"
+
 class PotRpmEstimator
 {
 public:
@@ -11,8 +13,8 @@ public:
     int rpm();
     
 private:
-    static const int    _minOut = 1000;
-    static const int    _maxOut = 10500;
+    static const int    _minOut = RpmEstimatorSettings::minRpm;
+    static const int    _maxOut = RpmEstimatorSettings::maxRpm;
     static const int    _minIn = 935;
     static const int    _maxIn = (1 << 10) - 1;
     
