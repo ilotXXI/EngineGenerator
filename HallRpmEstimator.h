@@ -16,8 +16,9 @@ public:
 private:
     static constexpr int    _minOut = RpmEstimatorSettings::minRpm;
     static constexpr int    _maxOut = RpmEstimatorSettings::maxRpm;
-    static constexpr int    _maxSpeedKmh = 25;
-    static constexpr float  _wheelDiameter = 24.f * 2.54E-2f;
+    static constexpr float  _maxSpeedKmh = 25.f;
+    static constexpr float  _minDetectedSpeedKmh = 2.f;
+    static constexpr float  _wheelDiameterM = 24.f * 2.54E-2f;
     static constexpr float  _prescaler = 1024.f;
     
     static constexpr int    _pin = 2;
@@ -25,10 +26,15 @@ private:
     int                     _rpm = _minOut;
     uint32_t                _lastOnCounter = 0;
     unsigned int            _counterOverflows = 0;
+    const uint32_t          _maxWaitCounter = calcMaxWaitCounter();
     bool                    _magnetWasNear = false;
     
     int calcRpm(uint32_t onCounter) const;
+    void checkCounterOverflow();
+    void checkDeadPeriod();
     uint32_t fullCounter() const;
+    
+    static uint32_t calcMaxWaitCounter();
 };
 
 
@@ -68,13 +74,8 @@ int HallRpmEstimator::rpm()
         _lastOnCounter = onCounter;
     }
 
-    if (TIFR1 & (1 << TOV1))
-    {
-        // TODO: 0 RPM when waiting is too long.
-        ++_counterOverflows;
-        // Reset the overflow flag.
-        TIFR1 |= (1 << TOV1);
-    }
+    checkCounterOverflow();
+    checkDeadPeriod();
     
     return _rpm;
 }
@@ -92,7 +93,7 @@ int HallRpmEstimator::calcRpm(uint32_t onCounter) const
     const float periodSec = float(periodClocks) * _prescaler / cpuFreq;
     const float periodHour = periodSec / 60.f / 60.f;
     
-    const float wayKm = _wheelDiameter * 1E-3f * pi;
+    const float wayKm = _wheelDiameterM * 1E-3f * pi;
     float speedKmh = wayKm / periodHour;
     if (speedKmh > _maxSpeedKmh)
     {
@@ -112,6 +113,27 @@ int HallRpmEstimator::calcRpm(uint32_t onCounter) const
     return int(rpm + 0.5f);
 }
 
+inline void HallRpmEstimator::checkCounterOverflow()
+{
+    if (TIFR1 & (1 << TOV1))
+    {
+        ++_counterOverflows;
+        // Reset the overflow flag.
+        TIFR1 |= (1 << TOV1);
+    }
+}
+
+inline void HallRpmEstimator::checkDeadPeriod()
+{
+    if (fullCounter() - _lastOnCounter > _maxWaitCounter)
+    {
+        _rpm = _minOut;
+        Serial.print("Dead period ");
+        Serial.print(_maxWaitCounter);
+        Serial.println(" is met");
+    }
+}
+
 inline uint32_t HallRpmEstimator::fullCounter() const
 {
     uint16_t bit16 = 0;
@@ -120,9 +142,31 @@ inline uint32_t HallRpmEstimator::fullCounter() const
         bit16 = TCNT1;
     }
     const uint32_t res = uint32_t(_counterOverflows) * (1ULL << 16ULL) + bit16;
-    Serial.print("Read counter: ");
-    Serial.println(res);
     return res;
+}
+
+uint32_t HallRpmEstimator::calcMaxWaitCounter()
+{
+    static_assert(_minDetectedSpeedKmh > 0.f,
+        "Minimal detected speed must be set");
+    static_assert(_minDetectedSpeedKmh < _maxSpeedKmh,
+        "Minimal detected speed must less then the maximal one");
+    
+    constexpr float cpuFreq = 16E6f;
+    constexpr float pi = 3.14159265359f;
+    constexpr float wheelLenKm = _wheelDiameterM * 1E-3f * pi;
+    constexpr float maxPeriodH = wheelLenKm / _minDetectedSpeedKmh;
+    constexpr float maxPeriodSec = maxPeriodH * 60.f * 60.f;
+    constexpr float maxPeriodClocks = maxPeriodSec * cpuFreq / _prescaler;
+    
+    constexpr float safePeriodMax = float(1ULL << 31ULL) - 1.f;
+    static_assert(0.5f <= maxPeriodClocks,
+        "Wrong wheel \"dead\" period");
+    static_assert(maxPeriodClocks < safePeriodMax,
+        "The wheel \"dead\" period is too long to detect it. Try to raise "
+        "the _minDetectedSpeedKmh");
+    
+    return uint32_t(maxPeriodClocks + 0.5f);
 }
 
 #endif
